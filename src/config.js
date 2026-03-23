@@ -69,12 +69,16 @@ function getSettings() { return loadSettings(); }
 // --- Bridge-specific settings (bridge.settings.json) ---
 const BRIDGE_SETTINGS_PATH = path.join(__dirname, '..', 'bridge.settings.json');
 const DEFAULT_BRIDGE_SETTINGS = {
+    telegramBotToken: '',
+    telegramChatId: '',
+    telegramAutoStart: false,
     discordBotToken: '',
     discordChannelId: '',
     discordGuildId: '',
+    discordAutoStart: false,
     stepSoftLimit: 500,
     allowedBotIds: [],
-    autoStart: false,
+    autoStart: false, // Legacy for backward compatibility
     currentWorkspace: '',
     lastCascadeId: '',
     lastStepCount: 0,
@@ -185,6 +189,41 @@ function saveOrchestratorSettings(updates) {
     return _orchestratorSettings;
 }
 
+/**
+ * @ignore 
+ * Waits for the .tunnel-info.txt file to be created and updated, 
+ * indicating the Cloudflare tunnel is ready and fresh.
+ * @param {number} maxRetries Maximum number of retries (default 12)
+ * @param {number} intervalMs Interval between retries in ms (default 5000)
+ * @returns {Promise<boolean>} True if file exists and is fresh, false otherwise
+ */
+async function waitForTunnelInfo(maxRetries = 15, intervalMs = 5000) {
+    const infoFile = path.join(__dirname, '..', '.tunnel-info.txt');
+    const serverStartTime = Date.now() - (process.uptime() * 1000);
+    
+    for (let i = 0; i < maxRetries; i++) {
+        if (fs.existsSync(infoFile)) {
+            try {
+                const content = fs.readFileSync(infoFile, 'utf8');
+                const startedLine = content.split('\n').find(l => l.startsWith('Started:'));
+                if (startedLine) {
+                    const startedTs = new Date(startedLine.split('Started:')[1].trim()).getTime();
+                    // If the file was started AFTER the server (or very close to it), it's fresh
+                    if (startedTs > serverStartTime - 10000) { // 10s grace period
+                        console.log('  🤖 Tunnel info is fresh, waiting 30s for full stability...');
+                        await new Promise(r => setTimeout(r, 30000));
+                        return true;
+                    }
+                }
+            } catch (e) {
+                // Ignore read errors, might be partially written
+            }
+        }
+        await new Promise(r => setTimeout(r, intervalMs));
+    }
+    return false;
+}
+
 module.exports = {
     lsConfig, lsInstances, platform, PORT,
     POLL_INTERVAL, FAST_POLL_INTERVAL, SLOW_POLL_INTERVAL, BATCH_SIZE,
@@ -193,4 +232,5 @@ module.exports = {
     getBridgeSettings, saveBridgeSettings,
     getAgentApiSettings, saveAgentApiSettings,
     getOrchestratorSettings, saveOrchestratorSettings,
+    waitForTunnelInfo,
 };

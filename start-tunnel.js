@@ -7,6 +7,7 @@
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { sendTelegramNotification } = require('./src/utils/telegram-notify');
 
 // === Port configuration (single source of truth) ===
 const FE_PORT = 9808;  // Production FE port (dev uses 3000)
@@ -360,6 +361,11 @@ async function runTunnel() {
     ].join('\n');
     fs.writeFileSync(infoFile, info);
     log('*', `Tunnel info written to ${infoFile}`);
+
+    // Step 7: Optional Telegram notification
+    if (feUrl) {
+        sendTelegramNotification(qrUrl, authKey, log);
+    }
 
     // Keep remaining output flowing
     if (!QUIET) {

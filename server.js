@@ -4,7 +4,7 @@ const express = require('express');
 const http = require('http');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { PORT } = require('./src/config');
+const { PORT, waitForTunnelInfo } = require('./src/config');
 const { init, startAutoRescan } = require('./src/detector');
 const { setupRoutes } = require('./src/routes');
 const { setupWebSocket, startPolling } = require('./src/cache');
@@ -116,7 +116,7 @@ app.use(morgan(
 // Security event tracking
 app.use((req, res, next) => {
   const start = Date.now();
-  
+
   res.on('finish', () => {
     const duration = Date.now() - start;
     const logData = {
@@ -129,7 +129,7 @@ app.use((req, res, next) => {
       userAgent: req.get('user-agent'),
       cfRay: req.headers['cf-ray'],
     };
-    
+
     // Alert on security events (console only, not to file to avoid duplication)
     if (res.statusCode === 401 || res.statusCode === 403) {
       console.warn('🔒 Auth failure:', JSON.stringify(logData));
@@ -141,7 +141,7 @@ app.use((req, res, next) => {
       console.error('❌ Server error:', JSON.stringify(logData));
     }
   });
-  
+
   next();
 });
 
@@ -207,7 +207,7 @@ if (AUTH_KEY) {
     if (req.path === '/ws-url' || req.path === '/status') {
       return next();
     }
-    
+
     // Localhost bypass only if explicitly enabled (disabled by default for security)
     const ip = req.ip || req.socket.remoteAddress || '';
     const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -215,26 +215,26 @@ if (AUTH_KEY) {
     if (isLocal && allowLocalBypass) return next();
 
     const key = req.headers['x-auth-key'] || req.query.auth_key;
-    
+
     // Timing-safe comparison to prevent timing attacks
     if (!key || key.length !== AUTH_KEY.length) {
       return res.status(401).json({ error: 'Unauthorized — invalid or missing auth key' });
     }
-    
+
     try {
       const keyBuffer = Buffer.from(key);
       const authBuffer = Buffer.from(AUTH_KEY);
-      
+
       if (!crypto.timingSafeEqual(keyBuffer, authBuffer)) {
         return res.status(401).json({ error: 'Unauthorized — invalid or missing auth key' });
       }
     } catch (e) {
       return res.status(401).json({ error: 'Unauthorized — invalid or missing auth key' });
     }
-    
+
     next();
   });
-  
+
   // Apply strict rate limiter to sensitive operations
   app.use('/api/settings', strictLimiter);
   app.use('/api/launch-ide', strictLimiter);
@@ -283,17 +283,23 @@ server.listen(PORT, async () => {
   startResourceMonitor();
   startAutoRescan();
 
-  // Auto-start Agent Bridge if configured in settings.json
-  const { getSettings } = require('./src/config');
-  const bridgeCfg = getSettings().agentBridge || {};
-  if (bridgeCfg.autoStart && bridgeCfg.discordBotToken && bridgeCfg.discordChannelId) {
-    console.log('  🤖 Auto-starting Agent Bridge...');
+  // Auto-start Agent Bridge if configured in bridge.settings.json
+  const { getBridgeSettings } = require('./src/config');
+  const bridgeCfg = getBridgeSettings() || {};
+  const hasDiscord = bridgeCfg.discordBotToken && bridgeCfg.discordChannelId;
+  const hasTelegram = bridgeCfg.telegramBotToken && bridgeCfg.telegramChatId;
+
+  const useDiscord = (bridgeCfg.discordAutoStart || bridgeCfg.autoStart) && hasDiscord;
+  const useTelegram = bridgeCfg.telegramAutoStart && hasTelegram;
+
+  if (useDiscord || useTelegram) {
+    console.log(`  🤖 Auto-starting Agent Bridge (${useDiscord ? 'Discord' : ''}${useDiscord && useTelegram ? ' & ' : ''}${useTelegram ? 'Telegram' : ''})...`);
     const bridge = require('./src/agent-bridge');
-    bridge.startBridge(bridgeCfg).then(status => {
-      console.log(`  🤖 Bridge ACTIVE — cascade: ${status.cascadeIdShort}`);
+    const startCfg = { ...bridgeCfg, discord: useDiscord, telegram: useTelegram };
+    bridge.startBridge(startCfg).then(status => {
+      console.log(`  🤖 Bridge READY — Discord: ${status.discordActive}, Telegram: ${status.telegramActive}`);
     }).catch(e => {
       console.error('  ❌ Bridge auto-start failed:', e.message);
     });
   }
 });
-

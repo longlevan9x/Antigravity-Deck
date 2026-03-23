@@ -13,22 +13,30 @@
 const fs = require('fs');
 const path = require('path');
 const discord = require('./discord-relay');
-const { getSettings, saveSettings, getBridgeSettings, saveBridgeSettings } = require('./config');
+const telegram = require('./telegram-relay');
+const { getSettings, getBridgeSettings, saveBridgeSettings } = require('./config');
 const sessionManager = require('./agent-session-manager');
 
 // ── State ────────────────────────────────────────────────────────────────────
-
 const STATES = { IDLE: 'IDLE', ACTIVE: 'ACTIVE', TRANSITIONING: 'TRANSITIONING' };
 
-let state = STATES.IDLE;
+let state = STATES.IDLE; // Aggregate state for compatibility
+let isDiscordActive = false;
+let isTelegramActive = false;
+
 let softLimit = 500;
 let workspaceName = 'AntigravityAuto';
 let log = [];
 let bridgeLsInst = null;
 let session = null; // AgentSession instance — owns cascade lifecycle
 
-// ── Persist bridge state to settings.json ────────────────────────────────────
+// Active relays mapping for easier access
+const relays = {
+    discord: { active: false, module: discord, name: 'Discord' },
+    telegram: { active: false, module: telegram, name: 'Telegram' },
+};
 
+// ── Persist bridge state to settings.json ────────────────────────────────────
 function saveBridgeState() {
     if (!session) return;
     saveBridgeSettings({
@@ -40,127 +48,177 @@ function saveBridgeState() {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-async function startBridge(config = {}) {
-    if (state !== STATES.IDLE) {
-        throw new Error(`Bridge already ${state}`);
-    }
+/**
+ * Starts a specific transport channel.
+ */
+async function startTransport(type, config = {}) {
+    if (!relays[type]) throw new Error(`Unknown transport type: ${type}`);
+    if (relays[type].active) throw new Error(`${relays[type].name} already active`);
 
     const bs = getBridgeSettings();
-
-    const token = config.discordBotToken || bs.discordBotToken;
-    const channelId = config.discordChannelId || bs.discordChannelId;
     softLimit = config.stepSoftLimit || bs.stepSoftLimit || 500;
+    workspaceName = bs.currentWorkspace || config.workspaceName || 'AntigravityAuto';
 
-    // Load last-used workspace from bridge settings
-    workspaceName = bs.currentWorkspace
-        || config.workspaceName
-        || 'AntigravityAuto';
-
-    // Find the LS instance matching the workspace and bind bridgeLsInst
-    const { lsInstances } = require('./config');
-    const matchInst = lsInstances.find(
-        i => i.workspaceName.toLowerCase() === workspaceName.toLowerCase()
-    );
-    if (matchInst) {
-        bridgeLsInst = { port: matchInst.port, csrfToken: matchInst.csrfToken, useTls: matchInst.useTls };
-        addLog('system', `Bound to LS instance: ${workspaceName} (port ${matchInst.port})`);
-    } else {
-        addLog('system', `No LS instance found for workspace "${workspaceName}" — using global fallback`);
-    }
-
-    if (!token) throw new Error('Missing discordBotToken');
-    if (!channelId) throw new Error('Missing discordChannelId');
-
-    // Create AgentSession for cascade orchestration
-    const sessionOpts = {
-        workspace: workspaceName,
-        stepSoftLimit: softLimit,
-        lsInst: bridgeLsInst,
-        transport: 'discord',
-        persist: () => saveBridgeState(),
-    };
-
-    // Restore cascade from previous session if available
-    if (config.cascadeId && config.cascadeId.trim()) {
-        sessionOpts.cascadeId = config.cascadeId.trim();
-        addLog('system', `Locking to cascade: ${shortId(sessionOpts.cascadeId)}`);
-    } else {
-        // Try to restore from bridge settings
-        if (bs.lastCascadeId) {
-            sessionOpts.cascadeId = bs.lastCascadeId;
-            addLog('system', `Restored previous cascade: ${shortId(bs.lastCascadeId)} (${bs.lastStepCount || 0} steps)`);
-        } else {
-            addLog('system', 'Auto-follow mode: will create cascade on first message');
+    if (!session) {
+        const { lsInstances } = require('./config');
+        const matchInst = lsInstances.find(i => i.workspaceName.toLowerCase() === workspaceName.toLowerCase());
+        if (matchInst) {
+            bridgeLsInst = { port: matchInst.port, csrfToken: matchInst.csrfToken, useTls: matchInst.useTls };
+            addLog('system', `Bound to LS instance: ${workspaceName} (port ${matchInst.port})`);
         }
     }
 
-    session = sessionManager.createSession(sessionOpts);
-
-    // Wire session events → Discord messages + bridge log
-    session.on('log', ({ type, message }) => addLog(type, message));
-
-    session.on('cascade_transition', (info) => {
-        discord.sendMessage(discord.formatCascadeSwitch({
-            oldShort: info.oldShort,
-            newShort: info.newShort,
-            stepCount: info.oldStepCount || info.stepCount,
-        })).catch(e => addLog('error', `Transition notice error: ${e.message}`));
-
-        if (info.reason) {
-            discord.sendMessage(discord.formatBridgeStatus(
-                `New cascade #${info.newShort} for workspace \`${workspaceName}\` — please re-inject context`
-            )).catch(() => {});
-        }
-    });
-
-    session.on('step_limit_warning', ({ stepCount: sc, softLimit: sl }) => {
-        discord.sendMessage(discord.formatBridgeStatus(
-            `⚠️ Cascade #${shortId(session.cascadeId)} at ${sc}/${sl} steps — will auto-transition soon`
-        )).catch(() => {});
-    });
-
-    // Discord bot setup
-    const eventHook = (event, data) => {
-        if (event === 'error') addLog('error', `Discord: ${data.message}`);
-        if (event === 'update') addLog('system', `Discord msg from @${data.from}: "${data.text}"`);
-        if (event === 'reply') addLog('system', `Discord reply processed: action=${data.action}`);
-        if (event === 'command') addLog('system', `Discord command: /${data.command} from @${data.from}`);
-        if (event === 'listening') addLog('system', `Discord WS active on channel ${data.channelId}`);
-        if (event === 'ready') addLog('system', `Discord bot ready: ${data.tag}`);
-        if (event === 'ignored') addLog('system', `Discord ignored: "${data.text}"`);
+    const eventHook = (transportName, event, data) => {
+        if (event === 'error') addLog('error', `${transportName}: ${data.message}`);
+        if (event === 'ready') addLog('system', `${transportName} ready: ${data.tag || data.username}`);
+        if (event === 'listening') addLog('system', `${transportName} active on ${data.channelId || data.chatId}`);
+        if (event === 'log') addLog(data.type || 'system', data.message);
+        if (event === 'update') addLog('system', `[${transportName}] Message from ${data.from}: ${data.text}`);
     };
 
-    const guildId = config.discordGuildId || bs.discordGuildId || '';
-    await discord.init(token, channelId, guildId, eventHook);
-    discord.startListening(handlePiReply, handleCommand);
+    if (type === 'discord') {
+        const token = config.discordBotToken || bs.discordBotToken;
+        const channelId = config.discordChannelId || bs.discordChannelId;
+        const guildId = config.discordGuildId || bs.discordGuildId || '';
+        if (!token || !channelId) throw new Error('Missing Discord token or channel ID');
+        addLog('system', 'Initializing Discord bot...');
+        await discord.init(token, channelId, guildId, (ev, data) => eventHook('Discord', ev, data));
+        discord.startListening(handlePiReply, (cmd, args, rf) => handleCommand('Discord', cmd, args, rf));
+        isDiscordActive = true;
+        relays.discord.active = true;
+    } else if (type === 'telegram') {
+        const token = config.telegramBotToken || bs.telegramBotToken;
+        const chatId = config.telegramChatId || bs.telegramChatId;
+        if (!token || !chatId) throw new Error('Missing Telegram token or chat ID');
+        addLog('system', 'Initializing Telegram bot...');
 
-    state = STATES.ACTIVE;
-    addLog('system', `Bridge ACTIVE — workspace: ${workspaceName}, limit: ${softLimit}`);
+        let lastErr;
+        for (let i = 1; i <= 5; i++) {
+            try {
+                if (i > 1) addLog('system', `Retrying Telegram init (attempt ${i}/5)...`);
 
-    await discord.sendMessage(discord.formatBridgeStatus(
-        `Bridge ACTIVE\n` +
-        `**Workspace:** \`${workspaceName}\`\n` +
-        `**Cascade limit:** ${softLimit} steps\n` +
-        `Type \`/help\` for commands`
-    )).catch(e => addLog('error', `Discord init msg error: ${e.message}`));
+                const startAt = Date.now();
+                const initPromise = telegram.init(token, chatId, (ev, data) => eventHook('Telegram', ev, data));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('init timeout (15s)')), 15000));
+
+                await Promise.race([initPromise, timeoutPromise]);
+                addLog('system', `Telegram bot initialized successfully in ${((Date.now() - startAt) / 1000).toFixed(1)}s`);
+                lastErr = null;
+                break;
+            } catch (err) {
+                lastErr = err;
+                console.error(`  ❌ [Telegram] Attempt ${i} failed: ${err.message}`);
+                // if (i < 5) {
+                //     await telegram.stop().catch(() => { });
+                //     await new Promise(r => setTimeout(r, 5000));
+                // }
+            }
+        }
+        if (lastErr) throw new Error(`Telegram failed after 5 attempts: ${lastErr.message}`);
+
+        telegram.startListening(handlePiReply, (cmd, args, rf) => handleCommand('Telegram', cmd, args, rf));
+        isTelegramActive = true;
+        relays.telegram.active = true;
+    }
+
+    if (!session) {
+        addLog('system', `Creating agent session for ${workspaceName}...`);
+        const sessionOpts = {
+            workspace: workspaceName,
+            stepSoftLimit: softLimit,
+            lsInst: bridgeLsInst,
+            transport: type,
+            persist: () => saveBridgeState(),
+        };
+        if (bs.lastCascadeId) sessionOpts.cascadeId = bs.lastCascadeId;
+        session = sessionManager.createSession(sessionOpts);
+        session.on('log', ({ type, message }) => addLog(type, message));
+        session.on('cascade_transition', (info) => broadcastMessage(`🔄 Cascade transition: #${info.oldShort} → #${info.newShort}`));
+        session.on('step_limit_warning', ({ stepCount: sc }) => broadcastMessage(`⚠️ Warning: ${sc} steps reached`));
+        state = STATES.ACTIVE;
+    } else {
+        session.transport = Object.keys(relays).filter(k => relays[k].active).join('+');
+    }
+
+    addLog('system', `${relays[type].name} bridge started`);
+    // DO NOT await broadcastMessage to avoid hanging the API response if the bot is slow
+    broadcastMessage(`🤖 **${relays[type].name} Bridge Connected**\nWorkspace: \`${workspaceName}\``).catch(() => { });
 
     return getStatus();
 }
 
-function stopBridge() {
-    if (state === STATES.IDLE) return;
-    discord.stop().catch(() => {});
-    if (session) {
-        sessionManager.destroySession(session.id);
-        session = null;
+/**
+ * Stops a specific transport channel.
+ */
+function stopTransport(type) {
+    if (!relays[type] || !relays[type].active) return;
+    relays[type].module.stop();
+    relays[type].active = false;
+    if (type === 'discord') isDiscordActive = false;
+    if (type === 'telegram') isTelegramActive = false;
+    addLog('system', `${relays[type].name} bridge stopped`);
+    const remaining = Object.values(relays).filter(r => r.active);
+    if (remaining.length === 0) {
+        if (session) { sessionManager.destroySession(session.id); session = null; }
+        state = STATES.IDLE;
+    } else if (session) {
+        session.transport = remaining.map(r => r.name.toLowerCase()).join('+');
     }
-    state = STATES.IDLE;
-    addLog('system', 'Bridge stopped');
+}
+
+async function startBridge(config = {}) {
+    if (config.discordBotToken || getBridgeSettings().discordBotToken) await startTransport('discord', config);
+    if (config.telegramBotToken || getBridgeSettings().telegramBotToken) await startTransport('telegram', config);
+    return getStatus();
+}
+
+/**
+ * Sends a one-off test message to verify credentials.
+ */
+async function testTransport(type, config = {}) {
+    if (!relays[type]) throw new Error(`Unknown transport type: ${type}`);
+    const relay = relays[type];
+    const bs = getBridgeSettings();
+
+    // Use telegraf instance directly if not active
+    if (type === 'telegram') {
+        const token = config.telegramBotToken || bs.telegramBotToken;
+        const chatId = config.telegramChatId || bs.telegramChatId;
+        if (!token || !chatId) throw new Error('Missing Telegram token or chat ID');
+
+        // If already active, use the existing one, otherwise init a temporary one
+        if (relay.active) {
+            await relay.module.sendMessage('🔔 **Telegram Bridge Test**: Connection working! (Active)');
+        } else {
+            // Telegraf init is fast
+            const { Telegraf } = require('telegraf');
+            const bot = new Telegraf(token);
+            await bot.telegram.sendMessage(chatId, '🔔 **Telegram Bridge Test**: Connection working! (Temporary check)');
+        }
+    } else if (type === 'discord') {
+        const token = config.discordBotToken || bs.discordBotToken;
+        const channelId = config.discordChannelId || bs.discordChannelId;
+        if (!token || !channelId) throw new Error('Missing Discord token or channel ID');
+        if (relay.active) {
+            await relay.module.sendMessage('🔔 **Discord Bridge Test**: Connection working!');
+        } else {
+            throw new Error('Discord test currently requires bridge to be started first');
+        }
+    }
+    return { ok: true, message: 'Test message sent successfully' };
+}
+
+function stopBridge() {
+    stopTransport('discord');
+    stopTransport('telegram');
+    return { ok: true };
 }
 
 function getStatus() {
     return {
         state,
+        discordActive: relays.discord.active,
+        telegramActive: relays.telegram.active,
         cascadeId: session?.cascadeId || null,
         cascadeIdShort: shortId(session?.cascadeId),
         stepCount: session?.stepCount || 0,
@@ -170,9 +228,20 @@ function getStatus() {
     };
 }
 
-// ── Discord Command Handler ───────────────────────────────────────────────────
+// ── Multi-Transport Helpers ──────────────────────────────────────────────────
 
-async function handleCommand(cmd, args, replyFn) {
+async function broadcastMessage(text) {
+    const activeOnes = Object.values(relays).filter(r => r.active);
+    const jobs = activeOnes.map(r => {
+        const msg = r.module.formatBridgeStatus ? r.module.formatBridgeStatus(text) : text;
+        return r.module.sendMessage(msg).catch(e => addLog('error', `Broadcast failed (${r.name}): ${e.message}`));
+    });
+    return Promise.all(jobs);
+}
+
+// ── Transport Command Handler ───────────────────────────────────────────────────
+
+async function handleCommand(transport, cmd, args, replyFn) {
     const settings = getSettings();
     const wsRoot = settings.defaultWorkspaceRoot || '';
     const { lsInstances } = require('./config');
@@ -183,14 +252,50 @@ async function handleCommand(cmd, args, replyFn) {
                 '📖 **Agent Bridge Commands**',
                 '```',
                 '/help              — Show this help',
-                '/listws            — List running LS instances + folders',
-                '/setws <name>      — Switch to workspace (opens if needed)',
-                '/createws <name>   — Create new workspace folder + open in Antigravity',
+                '/status            — Show current state & stats',
+                '/listws            — List workspaces',
+                '/setws <name>      — Switch/Open workspace',
+                '/logs              — Show last 10 logs',
+                '/accept, /reject   — Handle step approval',
+                '/abort             — Stop current task',
                 '```',
                 `**Active workspace:** \`${workspaceName}\``,
                 `**Cascade:** #${shortId(session?.cascadeId)} (${session?.stepCount || 0}/${softLimit} steps)`,
                 `**State:** ${state}`,
             ].join('\n'));
+            break;
+        }
+
+        case 'status': {
+            await replyFn([
+                `🤖 **Status: ${state}**`,
+                `Workspace: \`${workspaceName}\``,
+                `Cascade: #${shortId(session?.cascadeId)}`,
+                `Steps: ${session?.stepCount || 0}/${softLimit}`,
+                `Discord: ${relays.discord.active ? '🟢' : '🔴'} | Telegram: ${relays.telegram.active ? '🟢' : '🔴'}`,
+            ].join('\n'));
+            break;
+        }
+
+        case 'logs': {
+            const lastLogs = log.slice(-10).map(l => `• \`${new Date(l.ts).toLocaleTimeString()}\` [${l.type}] ${String(l.message).substring(0, 100)}`);
+            await replyFn(['📜 **Last 10 Logs**', ...lastLogs].join('\n'));
+            break;
+        }
+
+        case 'accept':
+        case 'reject':
+        case 'abort': {
+            if (!session) {
+                await replyFn('❌ No active session to handle this command');
+                break;
+            }
+            // Use the same Pi reply logic but with empty text and specific action
+            await handlePiReply({
+                reply: '',
+                action: cmd,
+                transport: transport.toLowerCase()
+            });
             break;
         }
 
@@ -386,24 +491,27 @@ async function handleCommand(cmd, args, replyFn) {
 // ── Handle Pi's reply from Discord ───────────────────────────────────────────
 // Now delegates to AgentSession for all cascade orchestration.
 
-async function handlePiReply({ reply, action, authorId, authorName }) {
+async function handlePiReply({ reply, action, authorId, authorName, transport }) {
     if (state !== STATES.ACTIVE && state !== STATES.TRANSITIONING) return;
     if (!session) return;
 
-    // Busy gate — handled by session, but give Discord-specific feedback
+    // Busy gate — handled by session, but give feedback to active transport
     if (session.isBusy) {
         addLog('system', 'Bridge busy — waiting for response relay. Message blocked.');
-        await discord.sendMessage(discord.formatBridgeStatus(
-            `⚠️ Agent đang xử lý, hãy chờ response rồi gửi lại message nhé`
-        )).catch(() => {});
+        const msg = `⚠️ Agent đang xử lý, hãy chờ response rồi gửi lại message nhé`;
+        if (transport === 'discord') discord.sendMessage(discord.formatBridgeStatus(msg)).catch(() => { });
+        else if (transport === 'telegram') telegram.sendMessage(msg).catch(() => { });
         return;
     }
 
     addLog('from_pi', (authorName ? `${authorName}: ` : '') + reply.substring(0, 200));
 
-    // Show "typing..." in Discord while waiting for response
-    discord.sendTyping();
-    const typingInterval = setInterval(() => discord.sendTyping(), 8000);
+    // Show "typing..."
+    const activeModules = Object.values(relays).filter(r => r.active).map(r => r.module);
+    activeModules.forEach(r => { if (r.sendTyping) r.sendTyping(); });
+    const typingInterval = setInterval(() => {
+        activeModules.forEach(r => { if (r.sendTyping) r.sendTyping(); });
+    }, 8000);
 
     // Delegate to AgentSession — blocking call
     const result = await session.sendMessage(reply, {
@@ -414,24 +522,26 @@ async function handlePiReply({ reply, action, authorId, authorName }) {
     clearInterval(typingInterval);
 
     if (result.text) {
-        // Send response to Discord
-        try {
-            await discord.sendResponse({
-                workspaceName,
-                cascadeIdShort: shortId(session.cascadeId),
-                stepCount: result.stepCount,
-                softLimit,
-                content: result.text,
-                mentionUserId: authorId,
-                mentionUserName: authorName,
-            });
-        } catch (e) {
-            addLog('error', `Discord send failed: ${e.message}`);
-        }
+        // Broadcast response to ALL active transports
+        const jobs = activeModules.map(async (r) => {
+            try {
+                await r.sendResponse({
+                    workspaceName,
+                    cascadeIdShort: shortId(session.cascadeId),
+                    stepCount: result.stepCount,
+                    softLimit,
+                    content: result.text,
+                    mentionUserId: authorId,
+                    mentionUserName: authorName,
+                });
+            } catch (e) {
+                addLog('error', `Send to relay failed: ${e.message}`);
+            }
+        });
+        await Promise.all(jobs);
     } else if (result.busy) {
-        await discord.sendMessage(discord.formatBridgeStatus(
-            `⚠️ Agent đang xử lý, hãy chờ response rồi gửi lại message nhé`
-        )).catch(() => {});
+        const msg = `⚠️ Agent đang xử lý, hãy chờ response rồi gửi lại message nhé`;
+        broadcastMessage(msg).catch(() => { });
     } else {
         addLog('system', 'Response extraction failed or timeout');
     }
@@ -465,9 +575,11 @@ function addLog(type, message) {
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
-    startBridge, stopBridge, getStatus,
+    startTransport, stopTransport, startBridge, stopBridge, getStatus, testTransport,
     STATES,
     get state() { return state; },
+    get isDiscordActive() { return isDiscordActive; },
+    get isTelegramActive() { return isTelegramActive; },
     get activeCascadeId() { return session?.cascadeId || null; },
     get stepCount() { return session?.stepCount || 0; },
 };

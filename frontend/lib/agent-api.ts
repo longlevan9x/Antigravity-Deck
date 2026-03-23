@@ -41,6 +41,10 @@ export interface BridgeSettings {
     discordBotToken: string;
     discordChannelId: string;
     discordGuildId: string;
+    discordAutoStart: boolean;
+    telegramBotToken: string;
+    telegramChatId: string;
+    telegramAutoStart: boolean;
     stepSoftLimit: number;
     allowedBotIds: string[];
     autoStart: boolean;
@@ -48,6 +52,8 @@ export interface BridgeSettings {
 
 export interface BridgeStatus {
     state: 'IDLE' | 'ACTIVE' | 'TRANSITIONING';
+    discordActive?: boolean;
+    telegramActive?: boolean;
     cascadeId: string | null;
     cascadeIdShort: string;
     stepCount: number;
@@ -132,6 +138,47 @@ export async function startBridge(config: Record<string, unknown> = {}): Promise
     return data;
 }
 
+export async function startDiscord(config: Record<string, unknown> = {}): Promise<BridgeStatus> {
+    const res = await fetch(`${API_BASE}/api/agent-bridge/start-discord`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(config),
+    });
+    const data = await res.json();
+    if (!data.ok && data.error) throw new Error(data.error);
+    return data;
+}
+
+export async function startTelegram(config: Record<string, unknown> = {}): Promise<BridgeStatus> {
+    const res = await fetch(`${API_BASE}/api/agent-bridge/start-telegram`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(config),
+    });
+    const data = await res.json();
+    if (!data.ok && data.error) throw new Error(data.error);
+    return data;
+}
+
+export async function testTransport(type: 'discord' | 'telegram', config: Record<string, unknown> = {}): Promise<{ ok: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/api/agent-bridge/test-transport`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ type, config }),
+    });
+    const data = await res.json();
+    if (!data.ok && data.error) throw new Error(data.error);
+    return data;
+}
+
 export async function stopBridge(): Promise<void> {
     await fetch(`${API_BASE}/api/agent-bridge/stop`, { method: 'POST', headers: authHeaders() });
+}
+
+export async function stopDiscord(): Promise<void> {
+    await fetch(`${API_BASE}/api/agent-bridge/stop-discord`, { method: 'POST', headers: authHeaders() });
+}
+
+export async function stopTelegram(): Promise<void> {
+    await fetch(`${API_BASE}/api/agent-bridge/stop-telegram`, { method: 'POST', headers: authHeaders() });
 }
