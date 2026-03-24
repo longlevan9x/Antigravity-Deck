@@ -15,6 +15,7 @@ const path = require('path');
 const discord = require('./discord-relay');
 const telegram = require('./telegram-relay');
 const { getSettings, getBridgeSettings, saveBridgeSettings } = require('./config');
+const { exec } = require('child_process');
 const sessionManager = require('./agent-session-manager');
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -486,9 +487,70 @@ async function handleCommand(transport, cmd, args, replyFn) {
             break;
         }
 
+        case 'git_commit': {
+            const lsInstance = await getActiveLsInstance(isSendReply = true);
+            const msg = args.join(' ') || 'Update from Agent Bridge';
+            await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...`);
+            const cmdStr = `git add . && git commit -m "${msg.replace(/"/g, '\\"')}"`;
+            await executeAndReply(cmdStr, replyFn, lsInstance);
+            break;
+        }
+
+        case 'git_push': {
+            const lsInstance = await getActiveLsInstance();
+            await replyFn('⏳ **Git**: Pushing to remote...');
+            await executeAndReply('git push', replyFn, lsInstance);
+            break;
+        }
+
+        case 'vercel_deploy': {
+            const lsInstance = await getActiveLsInstance();
+            await replyFn('⏳ **Vercel**: Deploying to production...');
+            // --yes skips prompts, --prod for production
+            await executeAndReply('vercel --prod --yes', replyFn, lsInstance);
+            break;
+        }
+
         default:
             await replyFn(`❓ Unknown command \`/${cmd}\`. Type \`/help\` for available commands.`);
     }
+
+    async function getActiveLsInstance() {
+        const lsInstance = lsInstances.find(ins => ins.active);
+        return lsInstance;
+    }
+    
+    async function executeAndReply(command, reply, lsInstance) {
+        if (!lsInstance) {
+            return reply(`❌ No active LS instance found`);
+        }
+
+        const cwd = uriToFsPath(lsInstance.workspaceFolderUri);
+        if (!fs.existsSync(cwd)) {
+            return reply(`❌ Error: Workspace path not found: \`${cwd}\``);
+        }
+
+        exec(command, { cwd: cwd }, async (error, stdout, stderr) => {
+            const output = (stdout || '') + (stderr || '');
+            const cleanOutput = output.trim().substring(0, 1800); // Telegram Limit
+            if (error) {
+                await reply(`❌ **Command Failed**\n\`\`\`\n${cleanOutput || error.message}\n\`\`\``);
+            } else {
+                await reply(`✅ **Success**\n\`\`\`\n${cleanOutput || 'Done (no output)'}\n\`\`\``);
+            }
+        });
+    }
+}
+
+// Helper: convert workspaceFolderUri to filesystem path
+function uriToFsPath(uri) {
+    if (!uri) return null;
+    try {
+        const url = new URL(uri);
+        let p = decodeURIComponent(url.pathname);
+        if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(p)) p = p.substring(1);
+        return p;
+    } catch { return null; }
 }
 
 // ── Handle Pi's reply from Discord ───────────────────────────────────────────

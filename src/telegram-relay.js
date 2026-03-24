@@ -5,6 +5,8 @@ function getMainMenu() {
         [Markup.button.callback('📊 Status', 'status'), Markup.button.callback('📜 Logs', 'logs')],
         [Markup.button.callback('📂 List Workspaces', 'listws'), Markup.button.callback('✅ Accept', 'accept')],
         [Markup.button.callback('❌ Reject', 'reject'), Markup.button.callback('🛑 Abort', 'abort')],
+        [Markup.button.callback('📝 Git Commit', 'git_commit'), Markup.button.callback('🚀 Git Push', 'git_push')],
+        [Markup.button.callback('🌌 Vercel Deploy', 'vercel_deploy')],
         [Markup.button.callback('📖 Help', 'help')]
     ]);
 }
@@ -40,6 +42,9 @@ async function init(token, tid, hook) {
         { command: 'start', description: 'Bắt đầu & Hiện menu' },
         { command: 'status', description: 'Kiểm tra trạng thái' },
         { command: 'listws', description: 'Danh sách workspace' },
+        { command: 'git_commit', description: 'Git Commit thay đổi' },
+        { command: 'git_push', description: 'Git Push thay đổi' },
+        { command: 'vercel_deploy', description: 'Deploy lên Vercel' },
         { command: 'logs', description: 'Xem log gần đây' },
         { command: 'help', description: 'Hướng dẫn sử dụng' }
     ]).catch(err => console.error('  ❌ [Telegram] Failed to set commands:', err.message));
@@ -54,6 +59,9 @@ async function init(token, tid, hook) {
     bot.command('accept', (ctx) => handleCommandWrap(ctx, 'accept'));
     bot.command('reject', (ctx) => handleCommandWrap(ctx, 'reject'));
     bot.command('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
+    bot.command('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit', ctx.message.text.split(' ').slice(1)));
+    bot.command('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
+    bot.command('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
 
     // Action handlers (for inline buttons)
     bot.action('status', (ctx) => handleCommandWrap(ctx, 'status'));
@@ -62,6 +70,9 @@ async function init(token, tid, hook) {
     bot.action('accept', (ctx) => handleCommandWrap(ctx, 'accept'));
     bot.action('reject', (ctx) => handleCommandWrap(ctx, 'reject'));
     bot.action('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
+    bot.action('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit'));
+    bot.action('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
+    bot.action('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
     bot.action('help', (ctx) => handleCommandWrap(ctx, 'help'));
 
     // Handle generic text messages
