@@ -17,6 +17,7 @@ const telegram = require('./telegram-relay');
 const { getSettings, getBridgeSettings, saveBridgeSettings } = require('./config');
 const { exec } = require('child_process');
 const sessionManager = require('./agent-session-manager');
+const vercelHelper = require('./vercel-helper');
 
 // ── State ────────────────────────────────────────────────────────────────────
 const STATES = { IDLE: 'IDLE', ACTIVE: 'ACTIVE', TRANSITIONING: 'TRANSITIONING' };
@@ -491,9 +492,10 @@ async function handleCommand(transport, cmd, args, replyFn) {
         case 'git_commit': {
             const lsInstance = await getActiveLsInstance(isSendReply = true);
             const msg = args.join(' ') || 'Update from Agent Bridge';
-            await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...\n\nPush is ready`);
+            await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...`);
             const cmdStr = `git add . && git commit -m "${msg.replace(/"/g, '\\"')}"`;
             await executeAndReply(cmdStr, replyFn, lsInstance);
+            await replyFn(`\n\nPush is ready`);
             break;
         }
 
@@ -511,12 +513,8 @@ async function handleCommand(transport, cmd, args, replyFn) {
                 break;
             }
 
-            const token = process.env.VERCEL_TOKEN ? `--token=${process.env.VERCEL_TOKEN}` : '';
-            const steps = [
-                { name: 'Pull (Production)', cmd: `vercel pull --yes --environment=production ${token}` },
-                { name: 'Build (Production)', cmd: `vercel build --prod ${token}` },
-                { name: 'Deploy (Production)', cmd: `vercel deploy --prebuilt --prod ${token}` }
-            ];
+            const vercelToken = process.env.VERCEL_TOKEN;
+            const steps = vercelHelper.getVercelDeploySteps(vercelToken);
 
             let lastOutput = '';
             for (const step of steps) {
@@ -536,6 +534,10 @@ async function handleCommand(transport, cmd, args, replyFn) {
                 await replyFn(`✅ **Vercel ${step.name} Success**\n\`\`\`\n${result.output || 'No output'}\n\`\`\``);
             }
 
+            // Fetch and show domain info
+            const workspacePath = uriToFsPath(lsInstance.workspaceFolderUri);
+            await vercelHelper.fetchVercelDomainInfo(workspacePath, vercelToken, addLog, replyFn);
+
             // Optional: Extract preview URL and show final success
             const urlMatch = lastOutput.match(/https:\/\/[a-zA-Z0-9-]+\.vercel\.app/);
             if (urlMatch) {
@@ -549,7 +551,10 @@ async function handleCommand(transport, cmd, args, replyFn) {
     }
 
     async function getActiveLsInstance() {
-        const lsInstance = lsInstances.find(ins => ins.active);
+        let lsInstance = lsInstances.find(ins => ins.workspaceName === workspaceName);
+        if (!lsInstance) {
+            lsInstance = lsInstances.find(ins => ins.active);
+        }
         return lsInstance;
     }
 
