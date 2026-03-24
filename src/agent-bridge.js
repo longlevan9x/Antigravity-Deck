@@ -495,7 +495,7 @@ async function handleCommand(transport, cmd, args, replyFn) {
             await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...`);
             const cmdStr = `git add . && git commit -m "${msg.replace(/"/g, '\\"')}"`;
             await executeAndReply(cmdStr, replyFn, lsInstance);
-            await replyFn(`\n\nPush is ready`);
+            await replyFn(`\n\nPush is ready /git_push`);
             break;
         }
 

@@ -44,7 +44,7 @@ async function init(token, tid, hook) {
         { command: 'listws', description: 'Danh sách workspace' },
         { command: 'git_commit', description: 'Git Commit thay đổi' },
         { command: 'git_push', description: 'Git Push thay đổi' },
-        { command: 'vercel_deploy', description: 'Deploy lên Vercel' },
+        // { command: 'vercel_deploy', description: 'Deploy lên Vercel' },
         { command: 'logs', description: 'Xem log gần đây' },
         { command: 'help', description: 'Hướng dẫn sử dụng' }
     ]).catch(err => console.error('  ❌ [Telegram] Failed to set commands:', err.message));
@@ -61,7 +61,7 @@ async function init(token, tid, hook) {
     bot.command('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
     bot.command('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit', ctx.message.text.split(' ').slice(1)));
     bot.command('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
-    bot.command('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
+    // bot.command('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
 
     // Action handlers (for inline buttons)
     bot.action('status', (ctx) => handleCommandWrap(ctx, 'status'));
@@ -72,7 +72,7 @@ async function init(token, tid, hook) {
     bot.action('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
     bot.action('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit'));
     bot.action('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
-    bot.action('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
+    // bot.action('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
     bot.action('help', (ctx) => handleCommandWrap(ctx, 'help'));
 
     // Handle generic text messages
