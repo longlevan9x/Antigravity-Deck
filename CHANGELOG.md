@@ -5,14 +5,34 @@
 ### Modified Files:
 
 #### 📂 `src/agent-bridge.js`
+- **Dynamic Workspace Path Resolution:**
+  - Added `extractWsPath` helper to convert `file:///` URIs from Language Server instances into local filesystem paths.
+  - Implemented **Self-Detection Fallback**: The bridge now automatically matches the active workspace to its own filesystem location if no explicit match is found.
+  - Updated `startTransport`, `setws`, and `createws` to correctly bind to detected project paths.
+  - Updated `/status` command to display the resolved filesystem path.
 - **Enhanced `eventHook` system:**
   - Restored and standardized logging for multiple event types across all transports: `error`, `ready`, `listening`, `log`, `update`, `reply`, `command`, and `ignored`.
   - Implemented detailed message formatting (e.g., `[Transport] Msg from @User: "Text"`) for better traceability.
+- **Standardized Environment Variable Loading:**
+  - Installed and configured the `dotenv` library.
+  - Replaced the manual `.env` loader in `server.js` with `require('dotenv').config()`.
+  - Ensures robust and standard management of secrets like `VERCEL_TOKEN`.
+- **Improved Vercel CLI Experience:**
+  - Added global installation requirement (`npm i -g vercel@latest`) to `/help`.
+  - Added smart error tips to `executeAndReply`: if `vercel` is not found, the bot suggests the installation command.
+  - **Refined Deployment Sequence**: 
+    - Updated `/vercel_deploy` to perform a robust Pull → Build → Deploy (prebuilt) sequence as **separate, awaitable steps**.
+    - **Real-time Feedback**: The bot now reports the status of each step individually to Telegram.
+    - **URL Extraction**: Automatically extracts and displays the production URL upon successful deployment.
+  - Added support for `VERCEL_TOKEN` environment variable.
 - **New Shell Commands:**
   - Added `git_commit`: Performs `git add . && git commit -m "..."` in the active workspace.
   - Added `git_push`: Performs `git push` in the active workspace.
   - Added `vercel_deploy`: Performs `vercel --prod --yes` to deploy the workspace to Vercel production.
   - Implemented `executeAndReply` helper for safe shell command execution with output relay.
+
+#### 📁 Project Documentation
+- **Updated `BRIDGE_NOTES.md`:** Added a new **"External Command Requirements"** section detailing common CLI tools (Vercel, Git) needed for bridge operations.
 
 #### 📂 `src/telegram-relay.js`
 - **Interactive UI Elements:**

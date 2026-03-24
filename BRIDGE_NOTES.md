@@ -58,4 +58,23 @@ Telegram bots have a **Privacy Mode** enabled by default. This prevents bots fro
 - `bridge.log`: Auto-generated file in project root containing all historical logs.
 - `src/config.js`: Contains tokens and channel/chat IDs.
 
-*Last updated: 2024-03-24 08:55*
+---
+
+## 🛠️ External Command Requirements
+
+Some bridge commands require external CLI tools to be installed globally on the host machine:
+
+### Vercel Deployment (`/vercel_deploy`)
+- **Installation:** `npm i -g vercel@latest`
+- **Setup:**
+  - Option A: Run `vercel login` manually on the host machine.
+  - Option B: Set `VERCEL_TOKEN` in your environment (recommended for headless/remote servers).
+- **Sequence:** Commands run: `pull` (production) → `build` (prod) → `deploy` (prebuilt prod).
+
+### Git Commands (`/git_commit`, `/git_push`)
+- **Requirement:** [Git](https://git-scm.com/)
+- **Setup:** Ensure your credentials (SSH or PAT) are configured on the host machine so that `git push` does not require interactive password input.
+
+---
+
+*Last updated: 2024-03-24 10:06*

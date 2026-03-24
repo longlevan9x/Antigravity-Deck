@@ -254,7 +254,7 @@ async function handleCommand(transport, cmd, args, replyFn) {
         case 'help': {
             await replyFn([
                 '📖 **Agent Bridge Commands**',
-                '```',
+                '---',
                 '/help              — Show this help',
                 '/status            — Show current state & stats',
                 '/listws            — List workspaces',
@@ -262,7 +262,8 @@ async function handleCommand(transport, cmd, args, replyFn) {
                 '/logs              — Show last 10 logs',
                 '/accept, /reject   — Handle step approval',
                 '/abort             — Stop current task',
-                '```',
+                '---',
+                '🚀 **Deploy**: Require `npm i -g vercel@latest`',
                 `**Active workspace:** \`${workspaceName}\``,
                 `**Cascade:** #${shortId(session?.cascadeId)} (${session?.stepCount || 0}/${softLimit} steps)`,
                 `**State:** ${state}`,
@@ -490,7 +491,7 @@ async function handleCommand(transport, cmd, args, replyFn) {
         case 'git_commit': {
             const lsInstance = await getActiveLsInstance(isSendReply = true);
             const msg = args.join(' ') || 'Update from Agent Bridge';
-            await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...`);
+            await replyFn(`⏳ **Git**: Committing changes with message: \`${msg}\`...\n\nPush is ready`);
             const cmdStr = `git add . && git commit -m "${msg.replace(/"/g, '\\"')}"`;
             await executeAndReply(cmdStr, replyFn, lsInstance);
             break;
@@ -505,9 +506,41 @@ async function handleCommand(transport, cmd, args, replyFn) {
 
         case 'vercel_deploy': {
             const lsInstance = await getActiveLsInstance();
-            await replyFn('⏳ **Vercel**: Deploying to production...');
-            // --yes skips prompts, --prod for production
-            await executeAndReply('vercel --prod --yes', replyFn, lsInstance);
+            if (!lsInstance) {
+                await replyFn(`❌ No active LS instance found`);
+                break;
+            }
+
+            const token = process.env.VERCEL_TOKEN ? `--token=${process.env.VERCEL_TOKEN}` : '';
+            const steps = [
+                { name: 'Pull (Production)', cmd: `vercel pull --yes --environment=production ${token}` },
+                { name: 'Build (Production)', cmd: `vercel build --prod ${token}` },
+                { name: 'Deploy (Production)', cmd: `vercel deploy --prebuilt --prod ${token}` }
+            ];
+
+            let lastOutput = '';
+            for (const step of steps) {
+                await replyFn(`⏳ **Vercel**: ${step.name} starting...`);
+                const result = await execute(step.cmd, lsInstance);
+                lastOutput = result.output;
+
+                if (result.error) {
+                    let errorMsg = `❌ **Vercel ${step.name} Failed**\n\`\`\`\n${result.output || result.error.message}\n\`\`\``;
+                    if (step.cmd.includes('vercel') && (result.error.message.includes('not found') || result.error.message.includes('not recognized'))) {
+                        errorMsg += '\n\n💡 **Tip**: Ensure Vercel CLI is installed: `npm i -g vercel@latest`';
+                    }
+                    await replyFn(errorMsg);
+                    return; // Stop execution on error
+                }
+                
+                await replyFn(`✅ **Vercel ${step.name} Success**\n\`\`\`\n${result.output || 'No output'}\n\`\`\``);
+            }
+
+            // Optional: Extract preview URL and show final success
+            const urlMatch = lastOutput.match(/https:\/\/[a-zA-Z0-9-]+\.vercel\.app/);
+            if (urlMatch) {
+                await replyFn(`🚀 **Deployment Live!**\nURL: ${urlMatch[0]}`);
+            }
             break;
         }
 
@@ -519,25 +552,30 @@ async function handleCommand(transport, cmd, args, replyFn) {
         const lsInstance = lsInstances.find(ins => ins.active);
         return lsInstance;
     }
-    
+
     async function executeAndReply(command, reply, lsInstance) {
-        if (!lsInstance) {
-            return reply(`❌ No active LS instance found`);
-        }
-
-        const cwd = uriToFsPath(lsInstance.workspaceFolderUri);
-        if (!fs.existsSync(cwd)) {
-            return reply(`❌ Error: Workspace path not found: \`${cwd}\``);
-        }
-
-        exec(command, { cwd: cwd }, async (error, stdout, stderr) => {
-            const output = (stdout || '') + (stderr || '');
-            const cleanOutput = output.trim().substring(0, 1800); // Telegram Limit
-            if (error) {
-                await reply(`❌ **Command Failed**\n\`\`\`\n${cleanOutput || error.message}\n\`\`\``);
-            } else {
-                await reply(`✅ **Success**\n\`\`\`\n${cleanOutput || 'Done (no output)'}\n\`\`\``);
+        const result = await execute(command, lsInstance);
+        if (result.error) {
+            let errorMsg = `❌ **Command Failed**\n\`\`\`\n${result.output || result.error.message}\n\`\`\``;
+            if (command.startsWith('vercel') && (result.error.message.includes('not found') || result.error.message.includes('not recognized'))) {
+                errorMsg += '\n\n💡 **Tip**: Ensure Vercel CLI is installed: `npm i -g vercel@latest`';
             }
+            await reply(errorMsg);
+        } else {
+            await reply(`✅ **Success**\n\`\`\`\n${result.output || 'Done (no output)'}\n\`\`\``);
+        }
+    }
+
+    async function execute(command, lsInstance) {
+        if (!lsInstance) return { error: new Error('No active LS instance'), output: '' };
+        const cwd = uriToFsPath(lsInstance.workspaceFolderUri);
+        if (!fs.existsSync(cwd)) return { error: new Error(`Path not found: ${cwd}`), output: '' };
+
+        return new Promise((resolve) => {
+            exec(command, { cwd }, (error, stdout, stderr) => {
+                const output = ((stdout || '') + (stderr || '')).trim().substring(0, 1800);
+                resolve({ error, output });
+            });
         });
     }
 }

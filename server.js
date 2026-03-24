@@ -1,4 +1,7 @@
-// === AntigravityAuto Server — Entry Point ===
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
+
 const logger = require('./src/logger'); // MUST be first — intercepts console.* globally
 const express = require('express');
 const http = require('http');
@@ -12,8 +15,6 @@ const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const morgan = require('morgan');
 const rfs = require('rotating-file-stream');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
