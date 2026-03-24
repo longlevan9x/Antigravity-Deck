@@ -73,7 +73,10 @@ async function startTransport(type, config = {}) {
         if (event === 'ready') addLog('system', `${transportName} ready: ${data.tag || data.username}`);
         if (event === 'listening') addLog('system', `${transportName} active on ${data.channelId || data.chatId}`);
         if (event === 'log') addLog(data.type || 'system', data.message);
-        if (event === 'update') addLog('system', `[${transportName}] Message from ${data.from}: ${data.text}`);
+        if (event === 'update') addLog('system', `[${transportName}] Msg from @${data.from}: "${data.text}"`);
+        if (event === 'reply') addLog('system', `[${transportName}] Reply processed: action=${data.action}`);
+        if (event === 'command') addLog('system', `[${transportName}] Command: /${data.command} from @${data.from}`);
+        if (event === 'ignored') addLog('system', `[${transportName}] Ignored: "${data.text || data.reason}"`);
     };
 
     if (type === 'discord') {
@@ -142,7 +145,7 @@ async function startTransport(type, config = {}) {
 
     addLog('system', `${relays[type].name} bridge started`);
     // DO NOT await broadcastMessage to avoid hanging the API response if the bot is slow
-    broadcastMessage(`🤖 **${relays[type].name} Bridge Connected**\nWorkspace: \`${workspaceName}\``).catch(() => { });
+    broadcastMessage(`🤖 **${relays[type].name} Bridge Connected**\nWorkspace: \`${workspaceName}\`\nUse /start to start the bot.`).catch(() => { });
 
     return getStatus();
 }

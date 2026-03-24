@@ -19,7 +19,7 @@ function sendTelegramNotification(qrUrl, authKey, log = console.log) {
             if (tgToken && tgChatId) {
                 log('*', 'Sending tunnel URL & QR to Telegram...');
                 const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrUrl)}`;
-                const tgMsg = `🚀 *Antigravity Deck is ONLINE!*\n\n🔗 [Open Dashboard](${qrUrl})\n🔑 Key: \`${authKey}\`\n\n_Scan the QR code above to login automatically._\n\nBot is starting...`;
+                const tgMsg = `🚀 *Antigravity Deck is ONLINE!*\n\n🔗 [Open Dashboard](${qrUrl})\n🔑 Key: \`${authKey}\`\n\n_Scan the QR code above to login automatically._\n\nUse /start to start the bot.`;
 
                 const body = JSON.stringify({
                     chat_id: tgChatId,
