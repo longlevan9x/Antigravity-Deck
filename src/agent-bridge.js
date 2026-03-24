@@ -263,6 +263,7 @@ async function handleCommand(transport, cmd, args, replyFn) {
                 '/logs              — Show last 10 logs',
                 '/accept, /reject   — Handle step approval',
                 '/abort             — Stop current task',
+                '/url               — Get Cloudflare URL & QR',
                 '---',
                 '🚀 **Deploy**: Require `npm i -g vercel@latest`',
                 `**Active workspace:** \`${workspaceName}\``,
@@ -280,6 +281,37 @@ async function handleCommand(transport, cmd, args, replyFn) {
                 `Steps: ${session?.stepCount || 0}/${softLimit}`,
                 `Discord: ${relays.discord.active ? '🟢' : '🔴'} | Telegram: ${relays.telegram.active ? '🟢' : '🔴'}`,
             ].join('\n'));
+            break;
+        }
+
+        case 'url': {
+            try {
+                const infoFile = path.join(__dirname, '..', '.tunnel-info.txt');
+                if (!fs.existsSync(infoFile)) {
+                    await replyFn("⚠️ Không tìm thấy thông tin tunnel.");
+                    break;
+                }
+                const content = fs.readFileSync(infoFile, 'utf8');
+                const lines = content.split('\n');
+                const info = {};
+                lines.forEach(line => {
+                    const [key, ...val] = line.split(': ');
+                    if (key && val.length) info[key.trim()] = val.join(': ').trim();
+                });
+                
+                const feUrl = info['Frontend'];
+                const authKey = info['Auth Key'];
+                
+                await replyFn([
+                    '🚀 **Antigravity Deck Tunnel Info**',
+                    `🔗 [Open Dashboard](${feUrl})`,
+                    `🔑 Key: \`${authKey}\``,
+                    `🌐 Backend: \`${info['Backend']}\``,
+                    `🕒 Started: \`${info['Started']}\``
+                ].join('\n'));
+            } catch (e) {
+                await replyFn(`❌ Error reading tunnel info: ${e.message}`);
+            }
             break;
         }
 

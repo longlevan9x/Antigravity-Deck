@@ -6,8 +6,7 @@ function getMainMenu() {
         [Markup.button.callback('📂 List Workspaces', 'listws'), Markup.button.callback('✅ Accept', 'accept')],
         [Markup.button.callback('❌ Reject', 'reject'), Markup.button.callback('🛑 Abort', 'abort')],
         [Markup.button.callback('📝 Git Commit', 'git_commit'), Markup.button.callback('🚀 Git Push', 'git_push')],
-        [Markup.button.callback('🌌 Vercel Deploy', 'vercel_deploy')],
-        [Markup.button.callback('📖 Help', 'help')]
+        [Markup.button.callback('🌐 URL & QR', 'url'), Markup.button.callback('📖 Help', 'help')]
     ]);
 }
 
@@ -44,6 +43,7 @@ async function init(token, tid, hook) {
         { command: 'listws', description: 'Danh sách workspace' },
         { command: 'git_commit', description: 'Git Commit thay đổi' },
         { command: 'git_push', description: 'Git Push thay đổi' },
+        { command: 'url', description: 'Lấy URL & QR Code' },
         // { command: 'vercel_deploy', description: 'Deploy lên Vercel' },
         { command: 'logs', description: 'Xem log gần đây' },
         { command: 'help', description: 'Hướng dẫn sử dụng' }
@@ -61,6 +61,7 @@ async function init(token, tid, hook) {
     bot.command('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
     bot.command('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit', ctx.message.text.split(' ').slice(1)));
     bot.command('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
+    bot.command('url', (ctx) => handleUrlCommand(ctx));
     // bot.command('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
 
     // Action handlers (for inline buttons)
@@ -72,6 +73,7 @@ async function init(token, tid, hook) {
     bot.action('abort', (ctx) => handleCommandWrap(ctx, 'abort'));
     bot.action('git_commit', (ctx) => handleCommandWrap(ctx, 'git_commit'));
     bot.action('git_push', (ctx) => handleCommandWrap(ctx, 'git_push'));
+    bot.action('url', (ctx) => handleUrlCommand(ctx));
     // bot.action('vercel_deploy', (ctx) => handleCommandWrap(ctx, 'vercel_deploy'));
     bot.action('help', (ctx) => handleCommandWrap(ctx, 'help'));
 
@@ -114,6 +116,47 @@ async function handleCommandWrap(ctx, cmd, args = []) {
 
     if (handleCommand) {
         await handleCommand(cmd, args, (text) => ctx.reply(text, { parse_mode: 'Markdown' }));
+    }
+}
+
+async function handleUrlCommand(ctx) {
+    if (ctx.chat.id.toString() !== chatId.toString()) return;
+    
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const infoFile = path.join(__dirname, '..', '.tunnel-info.txt');
+        
+        if (!fs.existsSync(infoFile)) {
+            return ctx.reply("⚠️ Không tìm thấy thông tin tunnel. Có thể bạn đang chạy ở chế độ local hoặc tunnel chưa khởi động xong.");
+        }
+        
+        const content = fs.readFileSync(infoFile, 'utf8');
+        const lines = content.split('\n');
+        const info = {};
+        lines.forEach(line => {
+            const [key, ...val] = line.split(': ');
+            if (key && val.length) info[key.trim()] = val.join(': ').trim();
+        });
+        
+        const qrUrl = info['QR URL'];
+        const authKey = info['Auth Key'];
+        const feUrl = info['Frontend'];
+        
+        if (!qrUrl || qrUrl === 'N/A') {
+            return ctx.reply(`🚀 *Antigravity Deck*\n\n🔗 [Open Dashboard](${feUrl})\n🔑 Key: \`${authKey}\``, { parse_mode: 'Markdown' });
+        }
+        
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrUrl)}`;
+        const tgMsg = `🚀 *Antigravity Deck is ONLINE!*\n\n🔗 [Open Dashboard](${qrUrl})\n🔑 Key: \`${authKey}\`\n\n_Quét mã QR bên trên để tự động đăng nhập._`;
+        
+        await ctx.replyWithPhoto(qrImageUrl, {
+            caption: tgMsg,
+            parse_mode: 'Markdown'
+        });
+    } catch (err) {
+        console.error('  ❌ [Telegram] Failed to send URL info:', err.message);
+        ctx.reply(`⚠️ Lỗi khi lấy thông tin: ${err.message}`);
     }
 }
 
